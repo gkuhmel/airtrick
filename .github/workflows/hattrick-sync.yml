@@ -1,0 +1,32 @@
+name: Hattrick → Airtable Sync
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"   # Tous les lundis à 07h
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests requests_oauthlib
+
+      - name: Run sync
+        env:
+          HATTRICK_CONSUMER_KEY: ${{ secrets.HATTRICK_CONSUMER_KEY }}
+          HATTRICK_CONSUMER_SECRET: ${{ secrets.HATTRICK_CONSUMER_SECRET }}
+          HATTRICK_ACCESS_TOKEN: ${{ secrets.HATTRICK_ACCESS_TOKEN }}
+          HATTRICK_ACCESS_SECRET: ${{ secrets.HATTRICK_ACCESS_SECRET }}
+          AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+          AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+        run: python sync_hattrick.py
