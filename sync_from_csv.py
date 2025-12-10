@@ -30,13 +30,14 @@ def normalize(s: str) -> str:
         return ""
     return (
         s.replace("\ufeff", "")   # BOM éventuel
-         .replace("\u00A0", " ") # espace insécable
+         .replace("\u00A0", " ") # espace insécable classique
+         .replace("\u202F", " ") # narrow no-break space (cas fréquent)
          .strip()
     )
 
 
 # ---------------------------------------------------
-# CSV LOADING – adapté à TON fichier
+# CSV LOADING – ultra tolérant
 # ---------------------------------------------------
 
 def load_csv_players(csv_path="players.csv"):
@@ -45,9 +46,10 @@ def load_csv_players(csv_path="players.csv"):
     if not os.path.exists(csv_path):
         fail(f"CSV file not found: {csv_path}")
 
-    # On lit tout en nettoyant BOM et insécables globalement
+    # Lire tout en nettoyant BOM et insécables globalement
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
-        raw = f.read().replace("\u00A0", " ")
+        raw = f.read()
+    raw = raw.replace("\u00A0", " ").replace("\u202F", " ")
 
     lines = raw.splitlines()
     if not lines:
@@ -57,8 +59,24 @@ def load_csv_players(csv_path="players.csv"):
     reader = csv.DictReader(lines, delimiter=",")
 
     # Normalisation des noms de colonnes
-    fieldmap = {col: normalize(col) for col in reader.fieldnames}
-    print("🔎 Debug header normalized:", list(fieldmap.values()))
+    raw_fieldnames = reader.fieldnames or []
+    normalized_fieldnames = [normalize(col) for col in raw_fieldnames]
+    print("🔎 Debug header normalized:", normalized_fieldnames)
+
+    # mapping "nom brut" -> "nom normalisé"
+    fieldmap = dict(zip(raw_fieldnames, normalized_fieldnames))
+
+    # Trouver la colonne ID joueur de manière robuste
+    pid_key = None
+    for name in normalized_fieldnames:
+        if "id du joueur" in name.lower():
+            pid_key = name
+            break
+
+    if not pid_key:
+        fail("Impossible de trouver la colonne 'ID du joueur' dans le header normalisé")
+
+    print("🧩 Detected PlayerID column:", repr(pid_key))
 
     players = []
 
@@ -66,18 +84,16 @@ def load_csv_players(csv_path="players.csv"):
         # Normaliser toutes les colonnes
         row = {fieldmap[k]: normalize(v) for k, v in raw_row.items()}
 
-        # ID du joueur après normalisation doit être exactement "ID du joueur"
-        pid = row.get("ID du joueur")
+        pid = row.get(pid_key)
         if pid:
             players.append(row)
 
     print(f"✅ {len(players)} players found in CSV")
 
-    # Petit debug : montrer le premier joueur si existant
     if players:
         first = players[0]
         print("👀 Example player from CSV:",
-              first.get("Nom"), "- ID:", first.get("ID du joueur"))
+              first.get("Nom"), "- ID:", first.get(pid_key))
 
     return players
 
@@ -132,7 +148,8 @@ def extract_skill(row):
 # ---------------------------------------------------
 
 def build_fields(row):
-    pid = normalize(row.get("ID du joueur"))
+    pid = normalize(row.get("ID du joueur"))  # avec la normalisation, ça marche
+
     skill_main, skill_secondary = extract_skill(row)
 
     fields = {
@@ -206,9 +223,6 @@ def main():
     csv_players = load_csv_players()
     airtable_index = load_airtable_players()
     csv_ids = upsert(csv_players, airtable_index)
-
-    # Quand tu seras sûr que tout est OK, tu pourras activer le cleanup :
-    # delete_missing(airtable_index, csv_ids)
 
     print("✅ Sync complete.")
 
