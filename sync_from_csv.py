@@ -9,9 +9,7 @@ import requests
 
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
-
-# ⚠️ Change ici selon le nom exact de ta table Airtable :
-AIRTABLE_TABLE = "Imported table"     # ou "Players" si tu renommes la table
+AIRTABLE_TABLE = "Players"
 
 AIRTABLE_URL = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE}"
 
@@ -20,12 +18,11 @@ airtable_headers = {
     "Content-Type": "application/json",
 }
 
-# Entraînement principal
-TRAINING_TYPE = "Buteur"  # utilisé pour déterminer SkillMain et SkillSecondary
+TRAINING_TYPE = "Buteur"  # ton entraînement principal
 
 
 # -------------------------------------
-# UTILITIES
+# UTILS
 # -------------------------------------
 
 def fail(msg):
@@ -34,18 +31,22 @@ def fail(msg):
 
 
 def normalize(s):
-    """Normalise totalement les chaînes provenant du CSV :
-    - retire BOM
-    - remplace espace insécable
-    - strip
+    """Nettoie les chaînes :
+    - supprime BOM
+    - remplace les insécables
+    - supprime les espaces autour
     """
     if s is None:
         return ""
-    return s.replace("\ufeff", "").replace("\u00A0", " ").strip()
+    return (
+        s.replace("\ufeff", "")   # BOM UTF-8
+         .replace("\u00A0", " ") # espace insécable
+         .strip()
+    )
 
 
 # -------------------------------------
-# CSV LOADING WITH FULL NORMALIZATION
+# CSV LOADING (ROBUST)
 # -------------------------------------
 
 def load_csv_players(csv_path="players.csv"):
@@ -54,30 +55,33 @@ def load_csv_players(csv_path="players.csv"):
     if not os.path.exists(csv_path):
         fail(f"CSV file not found: {csv_path}")
 
+    # Lire tout le fichier et nettoyer BOM & insécables globalement
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        raw = f.read().replace("\u00A0", " ")
+
+    lines = raw.splitlines()
+
+    # Détecter automatiquement le séparateur
+    try:
+        dialect = csv.Sniffer().sniff("\n".join(lines[:5]))
+    except:
+        dialect = csv.excel
+        dialect.delimiter = ','  # fallback
+
+    reader = csv.DictReader(lines, dialect=dialect)
+
+    # Normaliser les colonnes
+    fieldmap = {col: normalize(col) for col in reader.fieldnames}
+
     players = []
 
-    with open(csv_path, "r", encoding="utf-8") as f:
+    for raw_row in reader:
+        # Normaliser ligne
+        row = {fieldmap[k]: normalize(v) for k, v in raw_row.items()}
 
-        # Détection du séparateur
-        sample = f.read(2048)
-        f.seek(0)
-        dialect = csv.Sniffer().sniff(sample)
-
-        raw_reader = csv.DictReader(f, dialect=dialect)
-
-        # Normaliser TOUS les noms de colonnes
-        fieldmap = {raw: normalize(raw) for raw in raw_reader.fieldnames}
-
-        reader = []
-        for raw_row in raw_reader:
-            # normaliser les clés + valeurs
-            clean = {fieldmap[k]: normalize(v) for k, v in raw_row.items()}
-            reader.append(clean)
-
-        # Filtrer les joueurs valides (ID du joueur)
-        for row in reader:
-            if row.get("ID du joueur"):
-                players.append(row)
+        pid = row.get("ID du joueur") or row.get("ID du joueur ") or row.get("ID du joueur")
+        if pid and pid != "":
+            players.append(row)
 
     print(f"✅ {len(players)} players found in CSV")
     return players
@@ -115,24 +119,24 @@ def load_airtable_players():
 
 
 # -------------------------------------
-# SKILL EXTRACTION (training = buteur)
+# SKILL extraction for training BUTEUR
 # -------------------------------------
 
 def extract_skill(row):
-    """SkillMain = Buteur, SkillSecondary = Passe"""
     def to_int(x):
         try:
             return int(x)
         except:
             return 0
 
+    # Buteur = skill principale
     main = to_int(row.get("Buteur"))
     secondary = to_int(row.get("Passe"))
     return main, secondary
 
 
 # -------------------------------------
-# BUILD RECORD
+# BUILD FIELDS
 # -------------------------------------
 
 def build_fields(row):
@@ -146,9 +150,9 @@ def build_fields(row):
         "AgeYears": int(row.get("Âge", 0)),
         "AgeDays": int(row.get("Jours", 0)),
         "Specialty": normalize(row.get("Spécialité")),
-        "Salary": int(row.get("Salaire", row.get("Salaire ", 0))),
-        "Form": int(row.get("Forme", 0)),
-        "Stamina": int(row.get("Endurance", 0)),
+        "Salary": int(normalize(row.get("Salaire")) or 0),
+        "Form": int(normalize(row.get("Forme")) or 0),
+        "Stamina": int(normalize(row.get("Endurance")) or 0),
         "SkillMain": skill_main,
         "SkillSecondary": skill_secondary,
         "Position": normalize(row.get("Poste au dernier match")),
@@ -159,14 +163,13 @@ def build_fields(row):
 
 
 # -------------------------------------
-# UPSERT (update or create)
+# UPSERT
 # -------------------------------------
 
 def upsert(csv_players, airtable_index):
     csv_ids = set()
 
     for row in csv_players:
-
         player_id = normalize(row.get("ID du joueur"))
         csv_ids.add(player_id)
 
@@ -182,6 +185,7 @@ def upsert(csv_players, airtable_index):
             )
             if resp.status_code not in (200, 201):
                 fail(f"Update error for {fields['Name']}: {resp.text}")
+
             print(f"🔁 Updated {fields['Name']}")
 
         # Create
@@ -193,13 +197,14 @@ def upsert(csv_players, airtable_index):
             )
             if resp.status_code not in (200, 201):
                 fail(f"Create error for {fields['Name']}: {resp.text}")
+
             print(f"✨ Created {fields['Name']}")
 
     return csv_ids
 
 
 # -------------------------------------
-# DELETE MISSING PLAYERS IN AIRTABLE
+# DELETE MISSING
 # -------------------------------------
 
 def delete_missing(airtable_index, csv_ids):
@@ -213,7 +218,7 @@ def delete_missing(airtable_index, csv_ids):
 
     for pid in missing:
         rec_id = airtable_index[pid]
-        resp = requests.delete(f"{AIRTRACK_URL}/{rec_id}", headers=airtable_headers)
+        resp = requests.delete(f"{AIRTABLE_URL}/{rec_id}", headers=airtable_headers)
 
         if resp.status_code != 200:
             fail(f"Delete error for PlayerID {pid}: {resp.text}")
@@ -226,22 +231,20 @@ def delete_missing(airtable_index, csv_ids):
 # -------------------------------------
 
 def main():
-
     if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
         fail("AIRTABLE_API_KEY or AIRTABLE_BASE_ID not set")
 
-    print("🔍 DEBUG INFO:")
-    print("AIRTABLE_BASE_ID =", AIRTABLE_BASE_ID)
-    print("Table name =", AIRTABLE_TABLE)
+    print("🔍 DEBUG Airtable config:")
+    print("BASE_ID =", AIRTABLE_BASE_ID)
+    print("TABLE =", AIRTABLE_TABLE)
     print("URL =", AIRTABLE_URL)
     print("------")
 
     csv_players = load_csv_players()
     airtable_index = load_airtable_players()
-
     csv_ids = upsert(csv_players, airtable_index)
 
-    # delete_missing commented for safety until first real sync
+    # ⚠️ Activer après le premier import OK :
     # delete_missing(airtable_index, csv_ids)
 
     print("✅ Sync complete.")
