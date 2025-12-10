@@ -1,9 +1,10 @@
-name: Hattrick → Airtable Sync
+name: Sync players from CSV
 
 on:
-  schedule:
-    - cron: "0 7 * * 1"   # Tous les lundis à 07h
-  workflow_dispatch:
+  workflow_dispatch:        # lancement manuel depuis l'onglet Actions
+  push:
+    paths:
+      - 'players.csv'       # déclenchement auto si tu pousses un nouveau CSV
 
 jobs:
   sync:
@@ -11,22 +12,18 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install requests requests_oauthlib
+        run: pip install requests
 
-      - name: Run sync
+      - name: Run sync_from_csv
         env:
-          HATTRICK_CONSUMER_KEY: ${{ secrets.HATTRICK_CONSUMER_KEY }}
-          HATTRICK_CONSUMER_SECRET: ${{ secrets.HATTRICK_CONSUMER_SECRET }}
-          HATTRICK_ACCESS_TOKEN: ${{ secrets.HATTRICK_ACCESS_TOKEN }}
-          HATTRICK_ACCESS_SECRET: ${{ secrets.HATTRICK_ACCESS_SECRET }}
           AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
           AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
-        run: python sync_hattrick.py
+        run: python sync_from_csv.py
