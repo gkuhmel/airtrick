@@ -14,6 +14,39 @@ airtable_headers = {
 }
 
 
+def debug_config():
+    print("=== DEBUG AIRTABLE CONFIG ===")
+    print(f"AIRTABLE_BASE_ID: {repr(AIRTABLE_BASE_ID)}")
+    if AIRTABLE_API_KEY:
+        print(f"AIRTABLE_API_KEY is set, length = {len(AIRTABLE_API_KEY)} chars")
+    else:
+        print("AIRTABLE_API_KEY is NOT set (None or empty)")
+
+    print(f"AIRTABLE_URL used: {AIRTABLE_URL}")
+    print("=== END DEBUG AIRTABLE CONFIG ===")
+
+
+def test_airtable_connectivity():
+    """
+    Petit appel direct sur Airtable pour voir la vraie erreur
+    avant de lancer toute la sync.
+    """
+    print("⏬ Testing Airtable connectivity...")
+    resp = requests.get(AIRTABLE_URL, headers=airtable_headers)
+    print(f"Airtable test status: {resp.status_code}")
+    try:
+        print("Airtable test response JSON:", resp.json())
+    except Exception:
+        print("Airtable test raw response:", resp.text)
+
+    if resp.status_code != 200:
+        print("❌ Airtable connectivity test FAILED, aborting sync.")
+        return False
+
+    print("✅ Airtable connectivity test OK.")
+    return True
+
+
 def load_csv_players(csv_path="players.csv"):
     print(f"⏬ Loading CSV file: {csv_path}")
     players = []
@@ -62,12 +95,12 @@ def extract_skill(row):
     """Spécialisé pour entraînement BUTEUR"""
     try:
         main = int(row.get("Buteur", 0))
-    except:
+    except Exception:
         main = 0
 
     try:
         secondary = int(row.get("Passe", 0))
-    except:
+    except Exception:
         secondary = 0
 
     return main, secondary
@@ -113,14 +146,20 @@ def upsert(csv_players, airtable_index):
                 headers=airtable_headers,
                 json={"fields": fields},
             )
-            print(f"🔁 Updated {fields['Name']}")
+            if resp.status_code not in (200, 201):
+                print(f"❌ Update error for {fields['Name']}: {resp.text}")
+            else:
+                print(f"🔁 Updated {fields['Name']}")
         else:
             resp = requests.post(
                 AIRTABLE_URL,
                 headers=airtable_headers,
                 json={"fields": fields},
             )
-            print(f"✨ Created {fields['Name']}")
+            if resp.status_code not in (200, 201):
+                print(f"❌ Create error for {fields['Name']}: {resp.text}")
+            else:
+                print(f"✨ Created {fields['Name']}")
 
     return csv_ids
 
@@ -137,10 +176,23 @@ def delete_missing(airtable_index, csv_ids):
     for pid in missing:
         rec_id = airtable_index[pid]
         resp = requests.delete(f"{AIRTABLE_URL}/{rec_id}", headers=airtable_headers)
-        print(f"🗑️ Deleted PlayerID {pid}")
+        if resp.status_code != 200:
+            print(f"❌ Delete error for PlayerID {pid}: {resp.text}")
+        else:
+            print(f"🗑️ Deleted PlayerID {pid}")
 
 
 def main():
+    debug_config()
+
+    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
+        print("❌ AIRTABLE_API_KEY or AIRTABLE_BASE_ID not set. Aborting.")
+        return
+
+    # Test simple de connectivité avant d'aller plus loin
+    if not test_airtable_connectivity():
+        return
+
     csv_players = load_csv_players()
     airtable_index = load_airtable_players()
     csv_ids = upsert(csv_players, airtable_index)
