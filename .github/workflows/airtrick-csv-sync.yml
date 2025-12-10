@@ -1,0 +1,33 @@
+name: AIRTRICK_CSV_SYNC_V2   # <<< NOM NOUVEAU
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Debug workspace
+      run: |
+        echo "PWD:"
+        pwd
+        echo "--- LIST FILES ---"
+        ls -al .
+        echo "--- FIRST 5 LINES OF players.csv ---"
+        head -5 players.csv || echo "players.csv NOT FOUND"
+
+    - name: Show actual Python file
+      run: |
+        echo "--- sync_from_csv.py ---"
+        cat sync_from_csv.py
+
+    - name: Run Python script
+      env:
+        AIRTABLE_API_KEY: ${{ secrets.AIRTABLE_API_KEY }}
+        AIRTABLE_BASE_ID: ${{ secrets.AIRTABLE_BASE_ID }}
+      run: |
+        python3 sync_from_csv.py
