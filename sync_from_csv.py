@@ -1,57 +1,74 @@
-import os
 import csv
-import sys
 
-CSV_PATH = "players.csv"
+def normalize(s: str) -> str:
+    """Nettoie les chaînes :
+    - supprime BOM
+    - remplace les insécables
+    - supprime les espaces autour."""
+    if s is None:
+        return ""
+    return (
+        s.replace("\ufeff", "")   # BOM éventuel
+         .replace("\u00A0", " ") # espace insécable
+         .replace("\u202F", " ") # narrow no-break space
+         .strip()
+    )
 
-def main():
-    print("=== CSV DEBUG ===")
-    print("Working dir:", os.getcwd())
-    print("CSV exists?:", os.path.exists(CSV_PATH))
 
-    if not os.path.exists(CSV_PATH):
-        print("❌ players.csv not found")
-        sys.exit(1)
+def load_csv_players(csv_path="players.csv"):
+    print(f"⏬ Loading CSV file: {csv_path}")
 
-    # Lire brut
-    with open(CSV_PATH, "r", encoding="utf-8-sig", newline="") as f:
+    # Lire tout le fichier brut
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
         raw = f.read()
 
-    print("File size (chars):", len(raw))
+    # Normalisation globale
+    raw = raw.replace("\u00A0", " ").replace("\u202F", " ")
+
+    # Découpage en lignes
     lines = raw.splitlines()
-    print("Line count:", len(lines))
 
-    # Afficher les 5 premières lignes brutes
-    print("\n--- First raw lines ---")
-    for i, l in enumerate(lines[:5]):
-        print(f"{i}: {repr(l)}")
+    # Lecture CSV forcée à la virgule
+    reader = csv.DictReader(lines, delimiter=",")
 
-    # Parser avec csv
-    print("\n--- csv.reader preview ---")
-    reader = csv.reader(lines, delimiter=",")
-    rows = list(reader)
-    print("Row count (csv):", len(rows))
-    if rows:
-        print("Header row:", rows[0])
-    if len(rows) > 1:
-        print("First data row:", rows[1])
+    # Normaliser les noms de colonnes
+    raw_fieldnames = reader.fieldnames or []
+    normalized_fieldnames = [normalize(col) for col in raw_fieldnames]
 
-    # DictReader
-    print("\n--- csv.DictReader preview ---")
-    dict_reader = csv.DictReader(lines, delimiter=",")
-    print("Fieldnames:", dict_reader.fieldnames)
-    count = 0
-    first_row = None
-    for row in dict_reader:
-        if any(v.strip() for v in row.values()):
-            count += 1
-            if first_row is None:
-                first_row = row
-    print("Non-empty rows (DictReader):", count)
-    if first_row:
-        print("First DictReader row:", first_row)
+    print("🔎 Debug header normalized:", normalized_fieldnames)
 
-    print("=== END CSV DEBUG ===")
+    # Mapping : clé brute -> clé propre
+    fieldmap = dict(zip(raw_fieldnames, normalized_fieldnames))
 
-if __name__ == "__main__":
-    main()
+    # Détection robuste de la colonne PlayerID
+    pid_key = None
+    for col in normalized_fieldnames:
+        if "id du joueur" in col.lower():
+            pid_key = col
+            break
+
+    if not pid_key:
+        fail("Impossible de détecter la colonne ID du joueur")
+
+    print("🧩 PlayerID column detected:", repr(pid_key))
+
+    players = []
+
+    for raw_row in reader:
+        # Normalisation de toutes les valeurs
+        row = {fieldmap[k]: normalize(v) for k, v in raw_row.items()}
+
+        pid_value = row.get(pid_key)
+
+        # Joueur valide → ID non vide
+        if pid_value and pid_value.isdigit():
+            players.append(row)
+
+    print(f"✅ {len(players)} players found in CSV")
+
+    # Debug : premier joueur lu
+    if players:
+        p = players[0]
+        print("👀 First CSV player:", p.get("Nom"), "-", p.get(pid_key))
+
+    return players
