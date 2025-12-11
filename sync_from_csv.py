@@ -1,6 +1,7 @@
 import os
 import csv
 import sys
+import json
 import requests
 
 print("=== SCRIPT STARTED ===")
@@ -28,7 +29,7 @@ CSV_PATH = "players.csv"
 # ---------------------------------------------------
 
 def fail(msg):
-    print("❌", msg)
+    print("❌ FATAL ERROR:", msg)
     sys.exit(1)
 
 
@@ -50,9 +51,10 @@ def normalize(s: str) -> str:
 
 def load_csv_players():
     print("=== CSV LOADING START ===")
+    print("CSV path:", CSV_PATH)
 
     if not os.path.exists(CSV_PATH):
-        fail(f"CSV file not found: {CSV_PATH}")
+        fail("CSV file not found")
 
     with open(CSV_PATH, "r", encoding="utf-8-sig", newline="") as f:
         raw = f.read()
@@ -60,7 +62,7 @@ def load_csv_players():
     raw = raw.replace("\u00A0", " ").replace("\u202F", " ")
     lines = raw.splitlines()
 
-    print(f"CSV lines: {len(lines)}")
+    print(f"CSV lines detected: {len(lines)}")
 
     reader = csv.DictReader(lines, delimiter=",")
 
@@ -80,7 +82,7 @@ def load_csv_players():
             break
 
     if not pid_key:
-        fail("Impossible de trouver la colonne ID du joueur")
+        fail("❌ Impossible de trouver la colonne 'ID du joueur'")
 
     print("🧩 PlayerID column detected:", pid_key)
 
@@ -95,28 +97,37 @@ def load_csv_players():
     print(f"✅ Players parsed: {len(players)}")
 
     if players:
-        print("👀 First player:", players[0].get("Nom"), "-", players[0].get(pid_key))
+        print("👀 Example player:", players[0].get("Nom"), "-", players[0].get(pid_key))
 
     print("=== CSV LOADING END ===")
     return players
 
 
 # ---------------------------------------------------
-# AIRTABLE READ EXISTING
+# AIRTABLE LOAD EXISTING RECORDS
 # ---------------------------------------------------
 
 def load_airtable_existing():
     print("=== AIRTABLE LOAD EXISTING ===")
+    print("Url:", AIRTABLE_URL)
 
     existing = {}
     params = {"pageSize": 100}
 
     while True:
         resp = requests.get(AIRTABLE_URL, headers=HEADERS, params=params)
-        if resp.status_code != 200:
-            fail(f"Airtable read error: {resp.text}")
+        print("GET status:", resp.status_code)
 
-        data = resp.json()
+        try:
+            data = resp.json()
+        except:
+            fail("❌ Invalid JSON from Airtable: " + resp.text)
+
+        print("GET response snippet:", json.dumps(data, indent=2)[:300])
+
+        if resp.status_code != 200:
+            fail("❌ Airtable read error: " + resp.text)
+
         for rec in data.get("records", []):
             pid = rec["fields"].get("PlayerID")
             if pid:
@@ -127,12 +138,12 @@ def load_airtable_existing():
 
         params["offset"] = data["offset"]
 
-    print(f"Existing players in Airtable: {len(existing)}")
+    print(f"Existing players stored: {len(existing)}")
     return existing
 
 
 # ---------------------------------------------------
-# BUILD FIELDS
+# BUILD FIELDS FOR AIRTABLE
 # ---------------------------------------------------
 
 def extract_skill(row):
@@ -144,20 +155,17 @@ def extract_skill(row):
 
 
 def build_fields(row):
-    pid = normalize(row.get("ID du joueur"))
-    s_main, s_sec = extract_skill(row)
-
     return {
-        "PlayerID": pid,
+        "PlayerID": normalize(row.get("ID du joueur")),
         "Name": normalize(row.get("Nom")),
         "AgeYears": int(normalize(row.get("Âge")) or 0),
         "AgeDays": int(normalize(row.get("Jours")) or 0),
         "Specialty": normalize(row.get("Spécialité")),
         "Salary": int(normalize(row.get("Salaire")) or 0),
         "Form": int(normalize(row.get("Forme")) or 0),
-        "Stamina": int(normalize(row.get("Endurance")) or 0),
-        "SkillMain": s_main,
-        "SkillSecondary": s_sec,
+        "Stima": int(normalize(row.get("Endurance")) or 0),
+        "SkillMain": extract_skill(row)[0],
+        "SkillSecondary": extract_skill(row)[1],
         "Position": normalize(row.get("Poste au dernier match")),
         "LastSkillUp": normalize(row.get("Date du dernier match")),
     }
@@ -169,18 +177,34 @@ def build_fields(row):
 
 def upsert(players, existing_index):
     print("=== UPSERT START ===")
+    print("Total players to sync:", len(players))
 
     for row in players:
         pid = normalize(row.get("ID du joueur"))
         fields = build_fields(row)
 
+        print("\n➡️ Processing player:", fields["Name"])
+        print("PlayerID =", pid)
+        print("Fields sent =", json.dumps(fields, indent=2))
+
+        # UPDATE
         if pid in existing_index:
             rec_id = existing_index[pid]
-            resp = requests.patch(f"{AIRTABLE_URL}/{rec_id}", json={"fields": fields}, headers=HEADERS)
-            print(f"🔁 Updated {fields['Name']}")
-        else:
-            resp = requests.post(AIRTABLE_URL, json={"fields": fields}, headers=HEADERS)
-            print(f"✨ Created {fields['Name']}")
+            print("🔁 UPDATE record:", rec_id)
+
+            resp = requests.patch(f"{AIRTABLE_URL}/{rec_id}", headers=HEADERS, json={"fields": fields})
+
+            print("PATCH status:", resp.status_code)
+            print("PATCH response:", resp.text)
+
+            continue
+
+        # CREATE
+        print("✨ CREATE new record")
+        resp = requests.post(AIRTABLE_URL, headers=HEADERS, json={"fields": fields})
+
+        print("POST status:", resp.status_code)
+        print("POST response:", resp.text)
 
     print("=== UPSERT END ===")
 
@@ -190,7 +214,7 @@ def upsert(players, existing_index):
 # ---------------------------------------------------
 
 def main():
-    print("=== MAIN STARTED ===")
+    print("=== MAIN START ===")
 
     if not AIRTABLE_API_KEY:
         fail("AIRTABLE_API_KEY missing")
@@ -198,6 +222,7 @@ def main():
         fail("AIRTABLE_BASE_ID missing")
 
     print("Airtable Base:", AIRTABLE_BASE_ID)
+    print("Airtable Table:", AIRTABLE_TABLE)
 
     players = load_csv_players()
     existing = load_airtable_existing()
@@ -210,4 +235,3 @@ def main():
 if __name__ == "__main__":
     print("=== CALLING MAIN ===")
     main()
-s
