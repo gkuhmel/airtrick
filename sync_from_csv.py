@@ -163,7 +163,7 @@ def build_fields(row):
         "Specialty": normalize(row.get("Spécialité")),
         "Salary": int(normalize(row.get("Salaire")) or 0),
         "Form": int(normalize(row.get("Forme")) or 0),
-        "Stima": int(normalize(row.get("Endurance")) or 0),
+        "Stamina": int(normalize(row.get("Endurance")) or 0),
         "SkillMain": extract_skill(row)[0],
         "SkillSecondary": extract_skill(row)[1],
         "Position": normalize(row.get("Poste au dernier match")),
